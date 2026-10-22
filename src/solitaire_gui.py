@@ -2,6 +2,8 @@
 
 import tkinter as tk
 from tkinter import ttk
+from src.solitaire_game import SolitaireGame
+from src.game_rating import GameRating
 
 
 class SolitaireGUI:
@@ -11,13 +13,15 @@ class SolitaireGUI:
         """Initialize the application window and its controls."""
         self.root = root
         self.root.title("Peg Solitaire BrainVita")
-        self.root.geometry("720x560")
+        self.root.geometry("800x620")
         self.root.resizable(False, False)
 
         self.board_type = tk.StringVar(value="English")
+        self.board_size = tk.StringVar(value="7")
+        self.game = SolitaireGame()
         self.record_game = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Select a board type to begin.")
-
+        self.selected = None
         self.create_interface()
 
     def create_interface(self):
@@ -34,7 +38,7 @@ class SolitaireGUI:
 
         subtitle = ttk.Label(
             main_frame,
-            text="CS 449 Sprint 0 GUI Prototype",
+            text="CS 449 Peg Solitaire",
             font=("Arial", 12),
         )
         subtitle.pack(pady=(0, 10))
@@ -85,7 +89,22 @@ class SolitaireGUI:
                 command=self.update_status,
             )
             radio_button.pack(anchor="w", pady=3)
+        size_label = ttk.Label(
+            controls,
+            text="Board Size",
+            font=("Arial", 12, "bold"),
+        )
+        size_label.pack(anchor="w", pady=(15, 5))
 
+        size_selector = ttk.Combobox(
+            controls,
+            textvariable=self.board_size,
+            values=SolitaireGame.BOARD_SIZES,
+            state="readonly",
+            width=8,
+        )
+        size_selector.pack(anchor="w")
+        
         record_checkbox = ttk.Checkbutton(
             controls,
             text="Record game",
@@ -118,42 +137,45 @@ class SolitaireGUI:
         self.draw_board()
 
     def draw_board(self):
-        """Draw a simple English Peg Solitaire board prototype."""
+        """Draw the board and connect each hole to a mouse click."""
         self.board_canvas.delete("all")
 
-        spacing = 42
-        radius = 14
-        start_x = 78
-        start_y = 45
+        spacing = 32
+        radius = 12
+        center = self.game.size // 2
 
-        for row in range(7):
-            for column in range(7):
-                corner_position = (
-                    row < 2 or row > 4
-                ) and (
-                    column < 2 or column > 4
-                )
+        for position, has_peg in self.game.board.items():
+            row, column = position
 
-                if corner_position:
-                    continue
+            if self.game.board_type == "Hexagon":
+                x = 205 + (
+                    column - center - (row - center) / 2
+                ) * spacing
+                y = 175 + (row - center) * spacing * 0.866
+            else:
+                x = 205 + (column - center) * spacing
+                y = 175 + (row - center) * spacing
 
-                x = start_x + column * spacing
-                y = start_y + row * spacing
+            fill_color = "#4A6FA5" if has_peg else "white"
 
-                if row == 3 and column == 3:
-                    fill_color = "white"
-                else:
-                    fill_color = "#4A6FA5"
+            if position == self.selected:
+                fill_color = "#F4A340"
 
-                self.board_canvas.create_oval(
-                    x - radius,
-                    y - radius,
-                    x + radius,
-                    y + radius,
-                    fill=fill_color,
-                    outline="#23395D",
-                    width=2,
-                )
+            hole = self.board_canvas.create_oval(
+                x - radius,
+                y - radius,
+                x + radius,
+                y + radius,
+                fill=fill_color,
+                outline="#23395D",
+                width=2,
+            )
+
+            self.board_canvas.tag_bind(
+                hole,
+                "<Button-1>",
+                lambda event, pos=position: self.on_hole_click(pos),
+            )
 
     def update_status(self):
         """Update the status text when a setting changes."""
@@ -164,16 +186,73 @@ class SolitaireGUI:
         )
 
     def start_new_game(self):
-        """Respond to the New Game button."""
-        self.status.set(
-            f"New {self.board_type.get()} game selected."
-        )
+        """Reset the selected board and clear the selected peg."""
+        board_type = self.board_type.get()
+        size = int(self.board_size.get())
+
+        self.game.new_game(board_type, size)
+        self.selected = None
+        self.draw_board()
+        self.update_game_status()
 
     def start_autoplay(self):
         """Respond to the Autoplay button."""
         self.status.set("Autoplay selected for a future sprint.")
 
 
+    def on_hole_click(self, position):
+        """Select a peg or try jumping into an empty hole."""
+        if self.game.game_result() != "playing":
+            self.update_game_status()
+            return
+
+        if self.game.board[position]:
+            # Clicking a peg selects it; clicking it again deselects it.
+            if self.selected == position:
+                self.selected = None
+            else:
+                self.selected = position
+
+            self.draw_board()
+            self.update_game_status()
+            return
+
+        if self.selected is None:
+            self.status.set("Select a peg first, then an empty hole.")
+            return
+
+        if self.game.make_move(self.selected, position):
+            self.selected = None
+            self.draw_board()
+            self.update_game_status()
+        else:
+            self.status.set(
+                "Invalid move. Jump over one peg into an empty hole."
+            )
+
+    def update_game_status(self):
+        """Display the peg count, instructions, or final result."""
+        count = self.game.peg_count()
+        result = self.game.game_result()
+
+        if result == "win":
+            rating = GameRating.determine_rating(count)
+            self.status.set(f"You won! One peg remaining | {rating}")
+        elif result == "no_moves":
+            rating = GameRating.determine_rating(count)
+            self.status.set(
+                f"No moves remain | Pegs: {count} | Rating: {rating}"
+            )
+        elif self.selected is not None:
+            self.status.set(
+                f"Pegs remaining: {count} | Select an empty destination."
+            )
+        else:
+            self.status.set(
+                f"Pegs remaining: {count} | Select a peg to move."
+            )
+
+            
 def main():
     """Start the Peg Solitaire GUI application."""
     root = tk.Tk()
