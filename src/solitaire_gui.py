@@ -10,6 +10,12 @@ from src.game_session import GameSession
 class SolitaireGUI:
     """Display a prototype interface for the Peg Solitaire game."""
 
+    @property
+    def game(self):
+        """Always return the current session's game."""
+        return self.session.game
+    
+
     def __init__(self, root):
         """Initialize the application window and its controls."""
         self.root = root
@@ -21,7 +27,6 @@ class SolitaireGUI:
         self.board_size = tk.StringVar(value="7")
         self.mode = tk.StringVar(value="Manual")
         self.session = GameSession()
-        self.game = self.session.game
         self.timer = None
         self.replaying = False
         self.recording = False
@@ -234,7 +239,6 @@ class SolitaireGUI:
             size,
             self.mode.get(),
         )
-        self.game = self.session.game
 
         self.selected = None
         self.draw_board()
@@ -325,7 +329,6 @@ class SolitaireGUI:
         self.stop_timer()
 
         self.session = loaded
-        self.game = loaded.game
 
         self.replaying = True
         self.recording = False
