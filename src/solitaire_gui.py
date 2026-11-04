@@ -1,9 +1,10 @@
 """Create the Sprint 0 graphical interface for Peg Solitaire."""
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 from src.solitaire_game import SolitaireGame
 from src.game_rating import GameRating
+from src.game_session import GameSession
 
 
 class SolitaireGUI:
@@ -13,12 +14,17 @@ class SolitaireGUI:
         """Initialize the application window and its controls."""
         self.root = root
         self.root.title("Peg Solitaire BrainVita")
-        self.root.geometry("800x620")
+        self.root.geometry("850x780")
         self.root.resizable(False, False)
 
         self.board_type = tk.StringVar(value="English")
         self.board_size = tk.StringVar(value="7")
-        self.game = SolitaireGame()
+        self.mode = tk.StringVar(value="Manual")
+        self.session = GameSession()
+        self.game = self.session.game
+        self.timer = None
+        self.replaying = False
+        self.recording = False
         self.record_game = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Select a board type to begin.")
         self.selected = None
@@ -104,6 +110,34 @@ class SolitaireGUI:
             width=8,
         )
         size_selector.pack(anchor="w")
+
+        mode_label = ttk.Label(
+            controls,
+            text="Game Mode",
+            font=("Arial", 12, "bold"),
+        )
+        mode_label.pack(anchor="w", pady=(10, 5))
+
+        mode_selector = ttk.Combobox(
+            controls,
+            textvariable=self.mode,
+            values=("Manual", "Automated"),
+            state="readonly",
+            width=12,
+        )
+        mode_selector.pack(anchor="w")
+
+        for label, callback in (
+            ("Randomize", self.randomize_board),
+            ("Save Recording", self.save_recording),
+            ("Replay File", self.replay_file),
+        ):
+            button = ttk.Button(
+                controls,
+                text=label,
+                command=callback,
+            )
+            button.pack(fill="x", pady=3)
         
         record_checkbox = ttk.Checkbutton(
             controls,
@@ -186,22 +220,152 @@ class SolitaireGUI:
         )
 
     def start_new_game(self):
-        """Reset the selected board and clear the selected peg."""
+        """Create a fresh game using the selected settings."""
         board_type = self.board_type.get()
         size = int(self.board_size.get())
 
-        self.game.new_game(board_type, size)
+        self.stop_timer()
+
+        self.replaying = False
+        self.recording = self.record_game.get()
+
+        self.session = GameSession(
+            board_type,
+            size,
+            self.mode.get(),
+        )
+        self.game = self.session.game
+
         self.selected = None
         self.draw_board()
         self.update_game_status()
 
     def start_autoplay(self):
-        """Respond to the Autoplay button."""
-        self.status.set("Autoplay selected for a future sprint.")
+        """Start an automated game's animation."""
+        if self.replaying or self.session.mode != "Automated":
+            self.status.set(
+                "Choose Automated and click New Game first."
+            )
+            return
+
+        if self.timer is None:
+            self.autoplay_step()
+
+    def stop_timer(self):
+        """Cancel an existing autoplay or replay callback."""
+        if self.timer is not None:
+            self.root.after_cancel(self.timer)
+            self.timer = None
+
+    def autoplay_step(self):
+        """Make one move and schedule the next if play can continue."""
+        self.timer = None
+
+        if self.session.step():
+            self.draw_board()
+            self.update_game_status()
+
+            if self.game.game_result() == "playing":
+                self.timer = self.root.after(
+                    150,
+                    self.autoplay_step,
+                )
+        else:
+            self.update_game_status()
+
+    def randomize_board(self):
+        """Shuffle a manual board and update the display."""
+        if self.replaying or not self.session.randomize():
+            self.status.set(
+                "Randomization is available in manual mode."
+            )
+            return
+
+        self.selected = None
+        self.draw_board()
+        self.update_game_status()
+
+    def save_recording(self):
+        """Ask where to save the current recorded session."""
+        if not self.recording or self.replaying:
+            self.status.set(
+                "Check Record game before starting a new game."
+            )
+            return
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("Text recording", "*.json")],
+        )
+
+        if not path:
+            return
+
+        try:
+            self.session.save(path)
+            self.status.set("Recording saved.")
+        except OSError as error:
+            messagebox.showerror("Save failed", str(error))
+
+    def replay_file(self):
+        """Load a recording and begin displaying its saved states."""
+        path = filedialog.askopenfilename(
+            filetypes=[("Text recording", "*.json")],
+        )
+
+        if not path:
+            return
+
+        try:
+            loaded = GameSession.load(path)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            messagebox.showerror("Replay failed", str(error))
+            return
+
+        self.stop_timer()
+
+        self.session = loaded
+        self.game = loaded.game
+
+        self.replaying = True
+        self.recording = False
+        self.selected = None
+
+        self.board_type.set(self.game.board_type)
+        self.board_size.set(str(self.game.size))
+        self.mode.set(loaded.mode)
+
+        self.replay_step(0)
+
+    def replay_step(self, index):
+        """Display one frame and schedule the next frame."""
+        self.timer = None
+
+        self.session.show_frame(index)
+        self.draw_board()
+
+        self.status.set(
+            f"Replay frame {index + 1} "
+            f"of {len(self.session.frames)}"
+        )
+
+        if index + 1 < len(self.session.frames):
+            self.timer = self.root.after(
+                300,
+                lambda: self.replay_step(index + 1),
+            )
+        else:
+            self.status.set(
+                "Replay complete. Start New Game to play."
+            )
+
 
 
     def on_hole_click(self, position):
         """Select a peg or try jumping into an empty hole."""
+        if self.replaying or self.session.mode != "Manual":
+            return
+        
         if self.game.game_result() != "playing":
             self.update_game_status()
             return
@@ -221,7 +385,7 @@ class SolitaireGUI:
             self.status.set("Select a peg first, then an empty hole.")
             return
 
-        if self.game.make_move(self.selected, position):
+        if self.session.move(self.selected, position):
             self.selected = None
             self.draw_board()
             self.update_game_status()

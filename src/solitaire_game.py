@@ -143,3 +143,35 @@ class SolitaireGame:
             return "no_moves"
 
         return "playing"
+    
+    def legal_moves(self):
+        """Return all legal jumps from the current board."""
+        moves = []
+
+        for start, occupied in self.board.items():
+            if not occupied:
+                continue
+
+            for row_change, column_change in self.move_directions():
+                destination = (
+                    start[0] + 2 * row_change,
+                    start[1] + 2 * column_change,
+                )
+
+                if self.is_valid_move(start, destination):
+                    moves.append((start, destination))
+
+        return moves
+
+    def randomize(self, rng=None):
+        """Reposition pegs while preserving their count and board layout."""
+        import random
+
+        rng = rng or random
+        positions = list(self.board)
+        occupied = set(rng.sample(positions, self.peg_count()))
+
+        self.board = {
+            position: position in occupied
+            for position in positions
+        }
